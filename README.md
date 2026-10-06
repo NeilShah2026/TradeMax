@@ -1,36 +1,40 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# TradeMax
 
-## Getting Started
+A personal trading journal: log trades as you take them, track live P&L on open positions, take notes, and see where your edge comes from.
 
-First, run the development server:
+**Stack:** Next.js 16 (App Router) · Supabase (auth + Postgres with row-level security) · Finnhub (live quotes) · Tailwind 4 · Recharts
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## Setup
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+1. **Database** — paste [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql) into the Supabase SQL editor and run it.
+2. **Keys** — fill in `.env.local` (see `.env.example`):
+   - `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` — Supabase → Project Settings → API
+   - `FINNHUB_API_KEY` — free at finnhub.io
+   - `TRADEMAX_EMAIL`, `TRADEMAX_PASSWORD` — your login
+3. **Create your login** — `npm run create-user` (re-run any time to reset the password to what's in `.env.local`).
+4. **Run** — `npm run dev` → http://localhost:3000
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+> After editing `.env.local`, **restart the dev server** — `NEXT_PUBLIC_*` values are baked in when it starts.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Without Supabase keys the app runs in **demo mode** (sample data in your browser, simulated prices, no login).
 
-## Learn More
+## How it works
 
-To learn more about Next.js, take a look at the following resources:
+- A **trade** is one position in one symbol (long or short). Its **fills** are the individual buys/sells — scale in, take partials, close.
+- P&L uses **average-cost** accounting. Status, average cost, realized and unrealized P&L are all derived from the fills, so editing a fill recalculates everything.
+- Live prices refresh every 15s while the market is open (60/min Finnhub free tier; slower with 10+ positions, every 2 min when closed). The API key stays on the server.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+| Page | What's there |
+|---|---|
+| Dashboard | Total P&L (realized + open), cumulative / daily chart with ranges, key stats, recent trades, positions |
+| Trades | Searchable, filterable, sortable log of every trade |
+| Trade | Fills (add / edit / delete), close position, notes (autosave), setup & mistake tags, execution grade |
+| Positions | Open positions at live prices, day P&L, weights, one-click close |
+| Analytics | Win rate, profit factor, expectancy, drawdown, streaks; P&L by symbol, setup, mistake, weekday, hold time, side, grade |
+| Calendar | Monthly P&L heatmap with weekly totals; click a day to see its trades |
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+**Shortcuts:** `N` opens New trade. The eye icon blurs every dollar amount (for screen-sharing).
 
-## Deploy on Vercel
+## Deploying to Vercel
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Import the repo, add the same variables from `.env.local` in Project → Settings → Environment Variables (the service-role key and `TRADEMAX_*` aren't needed there), and deploy.
