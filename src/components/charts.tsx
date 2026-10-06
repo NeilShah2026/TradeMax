@@ -30,7 +30,18 @@ function zeroOffset(values: number[]) {
 }
 
 /** Cumulative P&L area. Line and wash turn red below zero. */
-export function PnlAreaChart({ points, height = 260, onHover }: { points: SeriesPoint[]; height?: number; onHover?: (p: SeriesPoint | null) => void }) {
+export function PnlAreaChart({
+  points,
+  height = 260,
+  onHover,
+  tip,
+}: {
+  points: SeriesPoint[];
+  height?: number;
+  onHover?: (p: SeriesPoint | null) => void;
+  /** Override the tooltip's label/sub line (e.g. intraday times instead of dates) */
+  tip?: (p: SeriesPoint) => { label: string; sub?: string };
+}) {
   const id = useId().replace(/:/g, "");
   const values = points.map((p) => p.value);
   const off = zeroOffset(values);
@@ -81,6 +92,7 @@ export function PnlAreaChart({ points, height = 260, onHover }: { points: Series
             content={({ active, payload }) => {
               const p = active && payload?.[0]?.payload as SeriesPoint | undefined;
               if (!p) return null;
+              if (tip) return <ChartTip value={p.value} {...tip(p)} />;
               return (
                 <ChartTip
                   label={p.live ? `Today · ${format(p.date, "MMM d")}` : format(p.date, "EEE, MMM d yyyy")}

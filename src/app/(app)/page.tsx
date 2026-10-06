@@ -1,11 +1,11 @@
 "use client";
 
 import { format, startOfWeek } from "date-fns";
-import { BarChart3, ChevronDown, ChevronRight, LineChart, Plus } from "lucide-react";
+import { Activity, BarChart3, ChevronDown, ChevronRight, LineChart, Plus } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { PnlAreaChart, PnlColumns } from "@/components/charts";
-import { useJournal } from "@/components/journal-provider";
+import { LIVE_INTERVAL, useJournal, type QuoteStatus } from "@/components/journal-provider";
 import { BigMoney, Money, PctPill, Pnl, PnlPct } from "@/components/money";
 import { PageBody, PageHeader } from "@/components/shell";
 import { TickerLogo } from "@/components/ticker-logo";
@@ -15,12 +15,13 @@ import { cn } from "@/lib/cn";
 import { fmtDuration, fmtMoney, fmtNumber, fmtPct, fmtPrice, fmtQty, signClass } from "@/lib/format";
 import { RANGE_LABEL, RANGES, rangeStart, type RangeKey } from "@/lib/ranges";
 import { usePersistentState } from "@/lib/use-persistent";
+import { useLiveSamples } from "@/lib/use-live-samples";
 
-type Mode = "cumulative" | "daily";
+type Mode = "cumulative" | "daily" | "live";
 
 export default function DashboardPage() {
   const j = useJournal();
-  const [mode, setMode] = usePersistentState<Mode>("dash-mode", "cumulative", ["cumulative", "daily"]);
+  const [mode, setMode] = usePersistentState<Mode>("dash-mode", "cumulative", ["cumulative", "daily", "live"]);
   const [range, setRange] = usePersistentState<RangeKey>("dash-range", "3M", RANGES);
   const [hover, setHover] = useState<SeriesPoint | null>(null);
 
@@ -59,6 +60,30 @@ export default function DashboardPage() {
   const shown = hover ? hover.value : total;
   const change = (hover ? hover.value : total) - baseline;
 
+  // Live portfolio: market value of open positions, sampled once per quote refresh (never faster than 15s)
+  const openDayPnl = j.open.reduce((a, p) => a + (p.dayPnl ?? 0), 0);
+  // One unquoted ticker (rate-limited, unsupported symbol) shouldn't stop the chart; it's carried at cost
+  const quotesIn = j.open.some((p) => p.price !== null);
+  const recording = quotesIn && (j.quoteStatus === "live" || j.quoteStatus === "demo");
+  const samples = useLiveSamples(recording ? { value: j.marketValue, pnl: openDayPnl } : null, LIVE_INTERVAL);
+  const livePoints = useMemo<SeriesPoint[]>(
+    () =>
+      samples.map((s, i) => ({
+        key: String(s.t),
+        date: new Date(s.t),
+        value: s.pnl,
+        daily: i ? s.pnl - samples[i - 1].pnl : 0,
+        realized: 0,
+        unrealized: s.value,
+        live: true,
+      })),
+    [samples],
+  );
+  const quotedAt = useMemo(() => {
+    const ts = Object.values(j.quotes).map((q) => q.time).filter((t) => t > 0);
+    return ts.length ? new Date(Math.max(...ts) * 1000) : null;
+  }, [j.quotes]);
+
   const stats = useMemo(() => computeStats(j.closed), [j.closed]);
   const recent = useMemo(() => [...j.summaries].sort((a, b) => b.lastActivity.getTime() - a.lastActivity.getTime()).slice(0, 6), [j.summaries]);
 
@@ -73,6 +98,7 @@ export default function DashboardPage() {
             options={[
               { value: "cumulative", label: "Total P&L", icon: <LineChart className="h-3.5 w-3.5" /> },
               { value: "daily", label: "Daily P&L", icon: <BarChart3 className="h-3.5 w-3.5" /> },
+              { value: "live", label: "Live", icon: <Activity className="h-3.5 w-3.5" /> },
             ]}
           />
         }
@@ -85,6 +111,15 @@ export default function DashboardPage() {
             <Skeleton className="h-10 w-64" />
             <Skeleton className="h-4 w-48" />
           </div>
+        ) : mode === "live" ? (
+          <LiveHero
+            value={hover ? hover.unrealized : j.marketValue}
+            dayPnl={hover ? hover.value : openDayPnl}
+            hoverAt={hover?.date ?? null}
+            status={j.quoteStatus}
+            quotedAt={quotedAt}
+            hasPositions={j.open.length > 0}
+          />
         ) : (
           <>
             <div className="text-[34px] leading-none font-semibold tracking-tight sm:text-[40px]">
@@ -116,7 +151,25 @@ export default function DashboardPage() {
 
       {/* Chart */}
       <div className="mt-4">
-        {j.loading || j.seriesLoading ? (
+        {mode === "live" ? (
+          j.loading ? (
+            <Skeleton className="mx-4 h-[260px] rounded-2xl sm:mx-8" />
+          ) : livePoints.length > 1 ? (
+            <PnlAreaChart
+              points={livePoints}
+              onHover={setHover}
+              tip={(p) => ({ label: format(p.date, "h:mm:ss a"), sub: `Value ${fmtMoney(p.unrealized)}` })}
+            />
+          ) : (
+            <div className="mx-4 grid h-[260px] place-items-center rounded-2xl border border-dashed border-border px-6 text-center text-sm text-muted sm:mx-8">
+              {!j.open.length
+                ? "No open positions to track"
+                : recording
+                  ? `Building today's intraday chart — a new point every ${LIVE_INTERVAL / 1000}s`
+                  : "The intraday chart fills in while the market is open"}
+            </div>
+          )
+        ) : j.loading || j.seriesLoading ? (
           <Skeleton className="mx-4 h-[260px] rounded-2xl sm:mx-8" />
         ) : j.summaries.length === 0 ? (
           <div className="mx-4 grid h-[260px] place-items-center rounded-2xl border border-dashed border-border sm:mx-8">
@@ -139,7 +192,7 @@ export default function DashboardPage() {
         ) : (
           <div className="grid h-[260px] place-items-center text-sm text-muted">No closed P&L in this range</div>
         )}
-        <div className="mt-3 flex justify-center px-4">
+        <div className={cn("mt-3 flex justify-center px-4", mode === "live" && "invisible")}>
           <div className="flex items-center gap-0.5 sm:gap-1" role="radiogroup" aria-label="Time range">
             {RANGES.map((r) => (
               <button
@@ -246,6 +299,62 @@ export default function DashboardPage() {
           </section>
         </div>
       </PageBody>
+    </>
+  );
+}
+
+function LiveHero({
+  value,
+  dayPnl,
+  hoverAt,
+  status,
+  quotedAt,
+  hasPositions,
+}: {
+  value: number;
+  dayPnl: number;
+  hoverAt: Date | null;
+  status: QuoteStatus;
+  quotedAt: Date | null;
+  hasPositions: boolean;
+}) {
+  const base = value - dayPnl;
+  const pct = base > 0 ? dayPnl / base : null;
+  const ticking = status === "live" || status === "demo";
+  const note = hoverAt
+    ? format(hoverAt, "h:mm:ss a")
+    : status === "off"
+      ? "Quotes not configured"
+      : status === "error"
+        ? "Quotes unavailable"
+        : status === "loading"
+          ? "Connecting…"
+          : ticking
+            ? `Updated ${quotedAt ? format(quotedAt, "h:mm:ss a") : "—"} · every ${LIVE_INTERVAL / 1000}s`
+            : `Market closed${quotedAt ? ` · as of ${format(quotedAt, "EEE h:mm a")}` : ""}`;
+  return (
+    <>
+      <div className="text-[34px] leading-none font-semibold tracking-tight sm:text-[40px]">
+        <BigMoney value={value} />
+      </div>
+      <div className="mt-2.5 flex min-h-4 flex-wrap items-center gap-x-2 gap-y-1 font-mono text-xs">
+        {hasPositions && (
+          <>
+            <Money value={dayPnl} sign className={signClass(dayPnl)} />
+            <PnlPct value={pct} />
+          </>
+        )}
+        <span className="text-muted">{hasPositions ? "today" : "No open positions"}</span>
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <div className="inline-flex h-7 items-center gap-2 rounded-lg border border-border bg-surface-2/60 px-2.5 font-mono text-[11px] text-muted">
+          <span className="relative flex h-2 w-2">
+            {ticking && !hoverAt && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-pos opacity-60" />}
+            <span className={cn("relative inline-flex h-2 w-2 rounded-full", ticking ? "bg-pos" : "bg-border-strong")} />
+          </span>
+          {note}
+        </div>
+      </div>
     </>
   );
 }

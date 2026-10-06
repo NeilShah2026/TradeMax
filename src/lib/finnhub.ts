@@ -21,16 +21,26 @@ async function get<T>(path: string, params: Record<string, string>, init?: Reque
 }
 
 // Small in-process caches so several tabs/components don't burn through the 60 req/min free tier.
+// Each symbol hits Finnhub at most once per QUOTE_TTL no matter how many clients are polling.
+export const QUOTE_TTL = 15_000;
 const quoteCache = new Map<string, { at: number; quote: Quote | null }>();
+const quoteInflight = new Map<string, Promise<Quote | null>>();
 const profileCache = new Map<string, Profile>();
 
 export async function fetchQuote(symbol: string): Promise<Quote | null> {
   const hit = quoteCache.get(symbol);
-  if (hit && Date.now() - hit.at < 10_000) return hit.quote;
-  const q = await get<{ c: number; d: number | null; dp: number | null; pc: number; t: number }>("/quote", { symbol }, { cache: "no-store" });
-  const quote: Quote | null = q && q.c > 0 ? { symbol, price: q.c, change: q.d ?? 0, changePct: q.dp ?? 0, prevClose: q.pc, time: q.t } : null;
-  quoteCache.set(symbol, { at: Date.now(), quote });
-  return quote;
+  if (hit && Date.now() - hit.at < QUOTE_TTL) return hit.quote;
+  // Concurrent requests for the same symbol share one upstream call
+  const pending = quoteInflight.get(symbol);
+  if (pending) return pending;
+  const req = (async () => {
+    const q = await get<{ c: number; d: number | null; dp: number | null; pc: number; t: number }>("/quote", { symbol }, { cache: "no-store" });
+    const quote: Quote | null = q && q.c > 0 ? { symbol, price: q.c, change: q.d ?? 0, changePct: q.dp ?? 0, prevClose: q.pc, time: q.t } : null;
+    quoteCache.set(symbol, { at: Date.now(), quote });
+    return quote;
+  })().finally(() => quoteInflight.delete(symbol));
+  quoteInflight.set(symbol, req);
+  return req;
 }
 
 export async function fetchProfile(symbol: string): Promise<Profile> {

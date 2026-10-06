@@ -86,11 +86,15 @@ async function fetchQuotes(symbols: string[]): Promise<QuotesResponse> {
   return res.json();
 }
 
+/** Fastest the client ever polls for quotes (matches the server-side cache in lib/finnhub). */
+export const LIVE_INTERVAL = 15_000;
+
 /** Live quotes for an arbitrary list of symbols (dialogs, trade page). */
 export function useQuotes(symbols: string[], anchors: Record<string, number> = {}) {
   const marketOpen = useMarketOpen();
   const key = symbols.length ? ["quotes", [...symbols].sort().join(",")] : null;
-  const interval = !marketOpen ? 120_000 : symbols.length > 10 ? 30_000 : isDemo ? 5_000 : 15_000;
+  // >10 symbols at 15s would be 40+ calls/min against Finnhub's 60/min free tier, so back off
+  const interval = !marketOpen ? 120_000 : isDemo ? 5_000 : symbols.length > 10 ? 2 * LIVE_INTERVAL : LIVE_INTERVAL;
   const { data, error, isLoading } = useSWR(
     key,
     async ([, list]: [string, string]) => {
@@ -98,7 +102,8 @@ export function useQuotes(symbols: string[], anchors: Record<string, number> = {
       if (isDemo) return { configured: true, quotes: simulateQuotes(syms, anchors), rateLimited: false } as QuotesResponse;
       return fetchQuotes(syms);
     },
-    { refreshInterval: interval, revalidateOnFocus: true, keepPreviousData: true, dedupingInterval: 4_000 },
+    // Focus/remount revalidations are deduped against the last fetch so they never add calls inside the 15s window
+    { refreshInterval: interval, revalidateOnFocus: true, keepPreviousData: true, dedupingInterval: isDemo ? 4_000 : LIVE_INTERVAL, focusThrottleInterval: LIVE_INTERVAL },
   );
   let status: QuoteStatus = "loading";
   if (isDemo) status = "demo";
