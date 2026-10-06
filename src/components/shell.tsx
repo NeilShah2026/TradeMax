@@ -147,7 +147,7 @@ function MobileTopBar() {
   const router = useRouter();
   const mounted = useMounted();
   return (
-    <div className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-border bg-bg/85 px-4 backdrop-blur-xl md:hidden">
+    <div className="sticky top-0 z-30 flex h-[calc(3.5rem+env(safe-area-inset-top))] items-center justify-between border-b border-border bg-bg/85 px-4 pt-[env(safe-area-inset-top)] backdrop-blur-xl md:hidden">
       <Link href="/" className="flex items-center gap-2">
         <LogoMark size={28} />
         <span className="text-[15px] font-semibold tracking-tight">TradeMax</span>
@@ -168,6 +168,8 @@ function MobileTopBar() {
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { newTrade } = useJournal();
+  const pathname = usePathname();
+  const onTradePage = /^\/trades\/[^/]+/.test(pathname);
 
   // "N" opens the new-trade dialog from anywhere (unless typing)
   useEffect(() => {
@@ -188,20 +190,20 @@ export function AppShell({ children }: { children: ReactNode }) {
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col md:py-2 md:pr-2">
         <MobileTopBar />
-        <main className="min-h-0 flex-1 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:h-[calc(100dvh-1rem)] md:overflow-y-auto md:rounded-2xl md:border md:border-border md:bg-surface md:pb-0 md:shadow-card">
+        <main className="min-h-0 flex-1 md:h-[calc(100dvh-1rem)] md:overflow-y-auto md:rounded-2xl md:border md:border-border md:bg-surface md:pb-0 md:shadow-card max-md:pb-[calc(8.5rem+env(safe-area-inset-bottom))]">
           {isDemo && <DemoBanner />}
           {children}
         </main>
       </div>
       <MobileNav />
-      <button
+      {!onTradePage && <button
         type="button"
         onClick={() => newTrade.start()}
         aria-label="New trade"
         className="fixed right-4 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-40 grid h-13 w-13 cursor-pointer place-items-center rounded-full bg-fg text-bg shadow-pop transition-transform active:scale-95 md:hidden"
       >
         <Plus className="h-5 w-5" />
-      </button>
+      </button>}
     </div>
   );
 }

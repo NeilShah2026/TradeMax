@@ -43,18 +43,20 @@ export function PnlAreaChart({ points, height = 260, onHover }: { points: Series
   const dataMin = Math.min(...values);
   const lineOff = dataMax - dataMin > 0 ? dataMax / (dataMax - dataMin) : 1;
   const stroke = dataMin >= 0 ? POS : dataMax <= 0 ? NEG : `url(#stroke-${id})`;
+  const track = (i: number | string | null | undefined) => onHover?.(i === undefined || i === null ? null : (points[Number(i)] ?? null));
 
   return (
-    <div style={{ height }} className="w-full select-none">
+    // pan-y keeps vertical page scrolling on phones while a horizontal drag scrubs the chart
+    <div style={{ height, touchAction: "pan-y" }} className="w-full select-none [-webkit-tap-highlight-color:transparent]">
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart
           data={points}
           margin={{ top: 8, right: 0, bottom: 0, left: 0 }}
-          onMouseMove={(s) => {
-            const i = s?.activeTooltipIndex;
-            onHover?.(i === undefined || i === null ? null : (points[Number(i)] ?? null));
-          }}
+          onMouseMove={(s) => track(s?.activeTooltipIndex)}
+          onTouchStart={(s) => track(s?.activeTooltipIndex)}
+          onTouchMove={(s) => track(s?.activeTooltipIndex)}
           onMouseLeave={() => onHover?.(null)}
+          onTouchEnd={() => onHover?.(null)}
         >
           <defs>
             <linearGradient id={`stroke-${id}`} x1="0" y1="0" x2="0" y2="1">
@@ -79,11 +81,17 @@ export function PnlAreaChart({ points, height = 260, onHover }: { points: Series
             content={({ active, payload }) => {
               const p = active && payload?.[0]?.payload as SeriesPoint | undefined;
               if (!p) return null;
-              return <ChartTip label={p.live ? "Now · incl. open" : format(p.date, "EEE, MMM d yyyy")} value={p.value} sub={p.daily ? `Day ${fmtMoney(p.daily, { sign: true })}` : undefined} />;
+              return (
+                <ChartTip
+                  label={p.live ? `Today · ${format(p.date, "MMM d")}` : format(p.date, "EEE, MMM d yyyy")}
+                  value={p.value}
+                  sub={`Day ${fmtMoney(p.daily, { sign: true })}`}
+                />
+              );
             }}
           />
           <Area
-            type="monotone"
+            type="linear"
             dataKey="value"
             baseValue={0}
             stroke={stroke}

@@ -99,6 +99,10 @@ function TradeView({ s, live }: { s: TradeSummary; live: LivePosition | null }) 
   const fillPnl = useMemo(() => perFillRealized(s), [s]);
   const opener = openingAction(trade.side);
 
+  const closePosition = () => setFillDialog({ open: true, fill: null, action: opener === "buy" ? "sell" : "buy", closeAll: true });
+  const addFill = () => setFillDialog({ open: true, fill: null, action: s.status === "open" ? undefined : opener });
+  const fillLabel = (f: Fill) => (f.action === "buy" ? (trade.side === "short" ? "Cover" : "Buy") : trade.side === "short" ? "Short" : "Sell");
+
   const remove = async () => {
     setDeleting(true);
     try {
@@ -114,7 +118,7 @@ function TradeView({ s, live }: { s: TradeSummary; live: LivePosition | null }) 
       <PageHeader left={<BackLink />} />
       <PageBody>
         {/* Header */}
-        <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3.5">
             <TickerLogo symbol={trade.symbol} size={48} />
             <div className="min-w-0">
@@ -137,11 +141,11 @@ function TradeView({ s, live }: { s: TradeSummary; live: LivePosition | null }) 
           </div>
           <div className="flex items-center gap-2">
             {s.status === "open" && (
-              <Button variant="outline" size="sm" onClick={() => setFillDialog({ open: true, fill: null, action: opener === "buy" ? "sell" : "buy", closeAll: true })}>
+              <Button variant="outline" size="sm" onClick={closePosition} className="max-md:hidden">
                 Close position
               </Button>
             )}
-            <Button variant="primary" size="sm" onClick={() => setFillDialog({ open: true, fill: null, action: s.status === "open" ? undefined : opener })}>
+            <Button variant="primary" size="sm" onClick={addFill} className="max-md:hidden">
               <Plus className="h-3.5 w-3.5" /> Add fill
             </Button>
             <Dropdown.Root>
@@ -215,7 +219,29 @@ function TradeView({ s, live }: { s: TradeSummary; live: LivePosition | null }) 
                 Fills
               </SectionTitle>
               <Card className="overflow-hidden">
-                <div className="overflow-x-auto">
+                {/* Phones: one tappable row per fill */}
+                <ul className="divide-y divide-border sm:hidden">
+                  {s.fills.map((f) => {
+                    const realized = fillPnl.get(f.id);
+                    const adds = f.action === opener;
+                    return (
+                      <li key={f.id}>
+                        <button type="button" onClick={() => setFillDialog({ open: true, fill: f })} className="flex w-full cursor-pointer items-center gap-3 px-4 py-3 text-left active:bg-surface-2">
+                          <span className={cn("h-2 w-2 shrink-0 rounded-full", adds ? "bg-accent" : "bg-faint")} />
+                          <div className="min-w-0 flex-1">
+                            <div className="font-mono text-[13px] font-medium">
+                              {fillLabel(f)} {fmtQty(f.quantity)} <span className="text-muted">@</span> {fmtPrice(f.price)}
+                            </div>
+                            <div className="mt-0.5 font-mono text-[11px] text-muted">{format(new Date(f.executed_at), "MMM d, yyyy · h:mm a")}</div>
+                          </div>
+                          <div className="text-right font-mono text-[13px]">{realized === undefined ? <Money value={f.price * f.quantity} className="text-muted" /> : <Pnl value={realized} />}</div>
+                          <Pencil className="h-3.5 w-3.5 shrink-0 text-faint" />
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+                <div className="hidden overflow-x-auto sm:block">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-border text-left font-mono text-[10.5px] tracking-wide text-muted uppercase">
@@ -238,7 +264,7 @@ function TradeView({ s, live }: { s: TradeSummary; live: LivePosition | null }) 
                             <td className="px-3 py-2.5">
                               <span className={cn("inline-flex items-center gap-1.5 font-mono text-[12px] uppercase", adds ? "text-fg" : "text-fg")}>
                                 <span className={cn("h-1.5 w-1.5 rounded-full", adds ? "bg-accent" : "bg-faint")} />
-                                {f.action === "buy" ? (trade.side === "short" ? "Cover" : "Buy") : trade.side === "short" ? "Short" : "Sell"}
+                                {fillLabel(f)}
                               </span>
                             </td>
                             <td className="px-3 py-2.5 text-right font-mono text-[13px] tabular">{fmtQty(f.quantity)}</td>
@@ -288,6 +314,18 @@ function TradeView({ s, live }: { s: TradeSummary; live: LivePosition | null }) 
           </aside>
         </div>
       </PageBody>
+
+      {/* Phones: thumb-reachable actions above the tab bar */}
+      <div className="fixed inset-x-0 bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-30 flex gap-2 border-t border-border bg-surface/92 px-4 py-2.5 backdrop-blur-xl md:hidden">
+        {s.status === "open" && (
+          <Button variant="outline" className="flex-1" onClick={closePosition}>
+            Close position
+          </Button>
+        )}
+        <Button variant="primary" className="flex-1" onClick={addFill}>
+          <Plus className="h-4 w-4" /> Add fill
+        </Button>
+      </div>
 
       <FillDialog
         summary={s}

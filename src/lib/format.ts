@@ -57,3 +57,11 @@ export function toLocalInput(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+
+/** Tight money for small cells: +$338, -$1.2k, +$14k */
+export function fmtShortMoney(v: number): string {
+  const abs = Math.abs(v);
+  const body = abs >= 10_000 ? `${Math.round(abs / 1000)}k` : abs >= 1000 ? `${(abs / 1000).toFixed(1)}k` : `${Math.round(abs)}`;
+  if (Math.round(abs) === 0) return "$0";
+  return `${v < 0 ? "-" : "+"}$${body}`;
+}

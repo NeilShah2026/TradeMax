@@ -9,6 +9,7 @@ const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"]
 export const metadata: Metadata = {
   title: { default: "TradeMax", template: "%s · TradeMax" },
   description: "Personal trading journal — positions, live P&L, notes and analytics.",
+  appleWebApp: { capable: true, title: "TradeMax", statusBarStyle: "default" },
 };
 
 export const viewport: Viewport = {

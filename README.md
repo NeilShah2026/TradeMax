@@ -23,10 +23,12 @@ Without Supabase keys the app runs in **demo mode** (sample data in your browser
 - A **trade** is one position in one symbol (long or short). Its **fills** are the individual buys/sells — scale in, take partials, close.
 - P&L uses **average-cost** accounting. Status, average cost, realized and unrealized P&L are all derived from the fills, so editing a fill recalculates everything.
 - Live prices refresh every 15s while the market is open (60/min Finnhub free tier; slower with 10+ positions, every 2 min when closed). The API key stays on the server.
+- The **P&L curve is marked to market daily**: each trading day = realized P&L to date + every position you held that night valued at that day's close (daily closes from Yahoo Finance, since Finnhub's free tier has no history). The last point uses live quotes for the current session, so the "Today"/"Mon" chip always equals the curve's last step. The **calendar** shows realized P&L by the day you closed.
+- **On your phone:** open the site and use *Add to Home Screen* — it launches full-screen like an app. Drag across the chart to scrub, swipe the calendar to change months.
 
 | Page | What's there |
 |---|---|
-| Dashboard | Total P&L (realized + open), cumulative / daily chart with ranges, key stats, recent trades, positions |
+| Dashboard | Total P&L (realized + open), daily mark-to-market chart (cumulative or day-by-day bars) with ranges, key stats, recent trades, positions |
 | Trades | Searchable, filterable, sortable log of every trade |
 | Trade | Fills (add / edit / delete), close position, notes (autosave), setup & mistake tags, execution grade |
 | Positions | Open positions at live prices, day P&L, weights, one-click close |

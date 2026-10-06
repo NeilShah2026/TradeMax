@@ -3,7 +3,7 @@
 import { addMonths, endOfMonth, format, isSameMonth, startOfMonth, startOfWeek } from "date-fns";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState, useSyncExternalStore } from "react";
+import { useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useJournal } from "@/components/journal-provider";
 import { Money, Pnl } from "@/components/money";
 import { PageBody, PageHeader } from "@/components/shell";
@@ -11,7 +11,7 @@ import { TickerLogo } from "@/components/ticker-logo";
 import { Button, Card, EmptyState, SectionTitle, SideBadge, Skeleton } from "@/components/ui";
 import { dayKey } from "@/lib/calc";
 import { cn } from "@/lib/cn";
-import { fmtMoney, fmtQty } from "@/lib/format";
+import { fmtMoney, fmtQty, fmtShortMoney } from "@/lib/format";
 
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -36,6 +36,7 @@ export default function CalendarPage() {
 
 function CalendarView() {
   const j = useJournal();
+  const touch = useRef<{ x: number; y: number } | null>(null);
   const [month, setMonth] = useState(() => startOfMonth(new Date()));
   const [selected, setSelected] = useState<string | null>(() => dayKey(new Date()));
 
@@ -120,7 +121,21 @@ function CalendarView() {
         {j.loading ? (
           <Skeleton className="mt-4 h-[520px] rounded-2xl" />
         ) : (
-          <Card className="mt-4 overflow-hidden">
+          <Card
+            className="mt-4 overflow-hidden"
+            onTouchStart={(e) => {
+              touch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            }}
+            onTouchEnd={(e) => {
+              const t = touch.current;
+              touch.current = null;
+              if (!t) return;
+              const dx = e.changedTouches[0].clientX - t.x;
+              const dy = e.changedTouches[0].clientY - t.y;
+              // a deliberate horizontal swipe changes month
+              if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) setMonth((m) => addMonths(m, dx < 0 ? 1 : -1));
+            }}
+          >
             <div className="grid grid-cols-7 border-b border-border md:grid-cols-[repeat(7,minmax(0,1fr))_minmax(0,0.9fr)]">
               {DOW.map((d) => (
                 <div key={d} className="px-2 py-2.5 text-center font-mono text-[10.5px] tracking-wide text-muted uppercase sm:text-left sm:px-3">
@@ -159,7 +174,8 @@ function CalendarView() {
                         <span className={cn("font-mono text-[11px]", k === todayKey ? "grid h-5 w-5 place-items-center rounded-full bg-fg font-semibold text-bg" : "text-muted")}>{d.getDate()}</span>
                         {info && (
                           <span className="mt-auto w-full">
-                            <span className="money block truncate font-mono text-[10px] font-semibold text-fg tabular sm:text-[13px]">{fmtMoney(info.pnl, { sign: true, compact: true, whole: Math.abs(info.pnl) >= 1000 })}</span>
+                            <span className="money block truncate font-mono text-[10px] font-semibold text-fg tabular sm:hidden">{fmtShortMoney(info.pnl)}</span>
+                            <span className="money hidden truncate font-mono text-[13px] font-semibold text-fg tabular sm:block">{fmtMoney(info.pnl, { sign: true, compact: true, whole: Math.abs(info.pnl) >= 1000 })}</span>
                             <span className="hidden font-mono text-[10.5px] text-fg/70 sm:block">
                               {info.tradeIds.length} {info.tradeIds.length === 1 ? "trade" : "trades"}
                             </span>

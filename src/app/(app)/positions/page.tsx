@@ -30,7 +30,7 @@ export default function PositionsPage() {
           <Tile label="Market value" value={<Money value={j.marketValue} />} sub={`${j.open.length} ${j.open.length === 1 ? "position" : "positions"}`} />
           <Tile label="Cost basis" value={<Money value={cost} />} />
           <Tile label="Open P&L" value={<Pnl value={j.unrealized} />} sub={cost > 0 ? fmtPct(j.unrealized / cost, { sign: true }) : undefined} subClass={signClass(j.unrealized)} />
-          <Tile label="Today" value={<Pnl value={j.dayPnl} />} sub="realized + open" />
+          <Tile label={j.dayLabel === "Today" ? "Today" : `Last session · ${j.dayLabel}`} value={<Pnl value={j.dayPnl} />} sub="realized + open" />
         </div>
 
         <Card className="mt-6 overflow-hidden">

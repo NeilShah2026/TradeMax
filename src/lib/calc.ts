@@ -214,33 +214,152 @@ export function dailyRealized(summaries: TradeSummary[]): DailyPnl[] {
 export interface SeriesPoint {
   key: string;
   date: Date;
-  value: number; // cumulative P&L
-  daily: number; // realized that day
+  /** Total P&L at that day's close: realized to date + open positions marked to the close */
+  value: number;
+  /** Change in total P&L vs the previous point */
+  daily: number;
+  realized: number;
+  unrealized: number;
   live?: boolean;
 }
 
-/** One point per calendar day from the first realized day through today; last point includes open P&L. */
-export function cumulativeSeries(daily: DailyPnl[], unrealized: number, now = new Date()): SeriesPoint[] {
-  const todayKey = dayKey(now);
-  const byKey = new Map(daily.map((d) => [d.key, d.pnl]));
-  const startDate = daily.length ? daily[0].date : new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  // start one day before the first event so the curve begins at 0
-  const cursor = new Date(startDate);
-  cursor.setDate(cursor.getDate() - 1);
-  const points: SeriesPoint[] = [];
-  let cum = 0;
-  while (dayKey(cursor) <= todayKey) {
-    const k = dayKey(cursor);
-    const d = byKey.get(k) ?? 0;
-    cum += d;
-    points.push({ key: k, date: new Date(cursor), value: cum, daily: d });
-    cursor.setDate(cursor.getDate() + 1);
+/** symbol -> day key -> closing price */
+export type CloseHistory = Record<string, Record<string, number>>;
+
+/**
+ * For each symbol, the first day we need a closing price from: any day a position was still open at the close.
+ * Trades opened and closed the same day need no history.
+ */
+export function historyNeeds(summaries: TradeSummary[], now = new Date()): Record<string, string> {
+  const today = dayKey(now);
+  const out: Record<string, string> = {};
+  for (const s of summaries) {
+    if (!s.fills.length) continue;
+    const start = dayKey(s.openedAt);
+    const end = s.closedAt ? dayKey(s.closedAt) : today;
+    if (end <= start && s.status === "closed") continue;
+    const sym = s.trade.symbol;
+    if (!out[sym] || start < out[sym]) out[sym] = start;
   }
-  const last = points[points.length - 1];
-  if (last && unrealized !== 0) {
-    points[points.length - 1] = { ...last, value: last.value + unrealized, live: true };
-  } else if (last) {
-    last.live = true;
+  return out;
+}
+
+interface Snapshot {
+  day: string;
+  qty: number;
+  avg: number;
+  realized: number;
+  lastPrice: number;
+}
+
+function snapshots(s: TradeSummary): Snapshot[] {
+  const dir = s.trade.side === "long" ? 1 : -1;
+  const open = openingAction(s.trade.side);
+  let qty = 0;
+  let avg = 0;
+  let realized = 0;
+  const out: Snapshot[] = [];
+  for (const f of s.fills) {
+    if (f.action === open) {
+      avg = (avg * qty + f.price * f.quantity) / (qty + f.quantity);
+      qty = round6(qty + f.quantity);
+    } else {
+      const q = Math.min(f.quantity, qty);
+      realized += (f.price - avg) * q * dir;
+      qty = round6(qty - q);
+    }
+    const day = dayKey(new Date(f.executed_at));
+    // several fills on one day collapse into that day's end state
+    if (out.length && out[out.length - 1].day === day) out[out.length - 1] = { day, qty, avg, realized, lastPrice: f.price };
+    else out.push({ day, qty, avg, realized, lastPrice: f.price });
+  }
+  return out;
+}
+
+/** Latest close on or before `day` (binary search over sorted keys) */
+function closeAsOf(keys: string[], closes: Record<string, number>, day: string): { day: string; close: number } | null {
+  let lo = 0;
+  let hi = keys.length - 1;
+  let hit = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (keys[mid] <= day) {
+      hit = mid;
+      lo = mid + 1;
+    } else hi = mid - 1;
+  }
+  return hit >= 0 ? { day: keys[hit], close: closes[keys[hit]] } : null;
+}
+
+/**
+ * Daily mark-to-market P&L curve: one point per trading day from the day before the first fill through the
+ * live session. Each point = realized P&L to date + every open position valued at that day's close; the last
+ * point uses live quotes. `liveDay` is the session the quotes belong to (e.g. Friday over a weekend), so the
+ * curve doesn't grow a flat extra point before the market opens.
+ */
+export function markToMarketSeries(
+  summaries: TradeSummary[],
+  history: CloseHistory,
+  quotes: Record<string, Quote>,
+  now = new Date(),
+  liveDay = dayKey(now),
+): SeriesPoint[] {
+  const withFills = summaries.filter((s) => s.fills.length);
+  if (!withFills.length) return [];
+
+  const trades = withFills.map((s) => ({ s, snaps: snapshots(s), i: -1, dir: s.trade.side === "long" ? 1 : -1 }));
+  const histKeys: Record<string, string[]> = {};
+  const allCloseDays = new Set<string>();
+  for (const [sym, closes] of Object.entries(history)) {
+    histKeys[sym] = Object.keys(closes).sort();
+    histKeys[sym].forEach((k) => allCloseDays.add(k));
+  }
+  const closeDays = [...allCloseDays].sort();
+  const histFrom = closeDays[0];
+  const histTo = closeDays[closeDays.length - 1];
+  const eventDays = new Set(trades.flatMap((t) => t.snaps.map((x) => x.day)));
+  const lastEvent = [...eventDays].sort().pop() ?? liveDay;
+  const today = lastEvent > liveDay ? lastEvent : liveDay;
+
+  const first = trades.reduce((m, t) => (t.snaps[0].day < m ? t.snaps[0].day : m), today);
+  const cursor = parseDayKey(first);
+  cursor.setDate(cursor.getDate() - 1);
+  while (cursor.getDay() === 0 || cursor.getDay() === 6) cursor.setDate(cursor.getDate() - 1);
+
+  const points: SeriesPoint[] = [];
+  for (; dayKey(cursor) <= today; cursor.setDate(cursor.getDate() + 1)) {
+    const k = dayKey(cursor);
+    const wd = cursor.getDay();
+    const isToday = k === today;
+    const useLive = k >= liveDay;
+    if (!isToday && !eventDays.has(k)) {
+      if (wd === 0 || wd === 6) continue;
+      // inside the range we have prices for, a weekday with no closes is a market holiday
+      if (histFrom && k >= histFrom && k <= histTo && !allCloseDays.has(k)) continue;
+    }
+    let realized = 0;
+    let unrealized = 0;
+    for (const t of trades) {
+      while (t.i + 1 < t.snaps.length && t.snaps[t.i + 1].day <= k) t.i++;
+      if (t.i < 0) continue;
+      const snap = t.snaps[t.i];
+      realized += snap.realized;
+      if (snap.qty > 0) {
+        const sym = t.s.trade.symbol;
+        // Mark at: today's live quote, else that day's close, else (no usable close yet) the last fill price
+        let price = snap.lastPrice;
+        const live = useLive ? quotes[sym]?.price : undefined;
+        if (live && live > 0) price = live;
+        else if (histKeys[sym]) {
+          const c = closeAsOf(histKeys[sym], history[sym], k);
+          if (c && c.close > 0 && c.day >= snap.day) price = c.close;
+        }
+        unrealized += (price - snap.avg) * snap.qty * t.dir;
+      }
+    }
+    const value = realized + unrealized;
+    const prev = points[points.length - 1];
+    points.push({ key: k, date: new Date(cursor), value, daily: prev ? value - prev.value : value, realized, unrealized, live: isToday });
   }
   return points;
 }

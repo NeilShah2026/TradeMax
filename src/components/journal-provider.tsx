@@ -4,8 +4,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, u
 import { useRouter } from "next/navigation";
 import useSWR, { useSWRConfig } from "swr";
 import { toast } from "sonner";
-import { cumulativeSeries, dailyRealized, livePosition, summarize, type DailyPnl, type LivePosition, type SeriesPoint, type TradeSummary } from "@/lib/calc";
-import { simulateQuotes } from "@/lib/demo-data";
+import { dailyRealized, dayKey, historyNeeds, livePosition, markToMarketSeries, summarize, type CloseHistory, type DailyPnl, type LivePosition, type SeriesPoint, type TradeSummary } from "@/lib/calc";
+import { simulateHistory, simulateQuotes } from "@/lib/demo-data";
 import { isDemo, repo } from "@/lib/repo";
 import { getBrowserSupabase } from "@/lib/supabase/client";
 import type { FillInput, NewTradeInput, Quote, Trade, TradePatch } from "@/lib/types";
@@ -25,9 +25,13 @@ interface Journal {
   realized: number;
   unrealized: number;
   dayPnl: number;
+  /** "Today", or the weekday of the last session when the market hasn't opened yet */
+  dayLabel: string;
   marketValue: number;
   daily: DailyPnl[];
   series: SeriesPoint[];
+  /** true while daily closes for the P&L curve are still loading */
+  seriesLoading: boolean;
   allSetups: string[];
   allMistakes: string[];
   actions: {
@@ -138,6 +142,34 @@ export function JournalProvider({ children }: { children: React.ReactNode }) {
   const anchors = useMemo(() => Object.fromEntries(openSummaries.map((s) => [s.trade.symbol, s.avgCost])), [openSummaries]);
   const { quotes, status: quoteStatus } = useQuotes(openSymbols, anchors);
 
+  // Daily closes for every symbol held overnight, so the P&L curve is marked to market each day
+  const needs = useMemo(() => historyNeeds(summaries), [summaries]);
+  const needKey = useMemo(
+    () =>
+      Object.entries(needs)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([sym, from]) => `${sym}:${from}`)
+        .join(","),
+    [needs],
+  );
+  const { data: fetchedHistory, error: historyError } = useSWR<CloseHistory>(
+    !isDemo && needKey ? ["history", needKey] : null,
+    async ([, k]: [string, string]) => {
+      const res = await fetch(`/api/history?s=${encodeURIComponent(k)}`);
+      if (!res.ok) throw new Error(`History failed (${res.status})`);
+      return (await res.json()).history as CloseHistory;
+    },
+    { revalidateOnFocus: false, refreshInterval: 30 * 60_000, keepPreviousData: true },
+  );
+  const demoQuotesReady = Object.keys(quotes).length > 0 || openSymbols.length === 0;
+  const history = useMemo<CloseHistory | undefined>(
+    () => (isDemo ? (demoQuotesReady ? simulateHistory(needs, trades ?? [], quotes) : undefined) : fetchedHistory),
+    // demo history only needs to be built once quotes exist; re-simulating on every tick would make the curve jitter
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [isDemo ? needKey : fetchedHistory, isDemo ? demoQuotesReady : null, trades],
+  );
+  const seriesLoading = !!needKey && !history && !historyError;
+
   const value = useMemo<Omit<Journal, "actions" | "newTrade">>(() => {
     const open = openSummaries
       .map((s) => livePosition(s, quotes[s.trade.symbol] ?? null))
@@ -150,7 +182,16 @@ export function JournalProvider({ children }: { children: React.ReactNode }) {
     const todayKey = new Date().toDateString();
     const realizedToday = summaries.flatMap((s) => s.events).filter((e) => e.date.toDateString() === todayKey).reduce((a, e) => a + e.pnl, 0);
     const dayPnl = realizedToday + open.reduce((a, p) => a + (p.dayPnl ?? 0), 0);
-    const series = cumulativeSeries(daily, unrealized);
+    // The session the live quotes belong to (Friday's over a weekend, yesterday's before the open)
+    const quoteTimes = Object.values(quotes).map((q) => q.time).filter((t) => t > 0);
+    const todayKey2 = dayKey(new Date());
+    const liveDay = quoteTimes.length ? dayKey(new Date(Math.max(...quoteTimes) * 1000)) : todayKey2;
+    const sessionDay = liveDay > todayKey2 ? todayKey2 : liveDay;
+    const series = markToMarketSeries(summaries, history ?? {}, quotes, new Date(), sessionDay);
+    const lastPoint = series[series.length - 1];
+    // Once price history is in, the day's P&L is exactly the curve's last step, so the chip and chart agree
+    const sessionPnl = !seriesLoading && lastPoint && series.length > 1 ? lastPoint.daily : dayPnl;
+    const dayLabel = !lastPoint || lastPoint.key === todayKey2 ? "Today" : lastPoint.date.toLocaleDateString(undefined, { weekday: "short" });
     const tally = (pick: (t: Trade) => string[]) => {
       const counts = new Map<string, number>();
       (trades ?? []).forEach((t) => pick(t).forEach((x) => counts.set(x, (counts.get(x) ?? 0) + 1)));
@@ -168,14 +209,16 @@ export function JournalProvider({ children }: { children: React.ReactNode }) {
       quoteStatus,
       realized,
       unrealized,
-      dayPnl,
+      dayPnl: sessionPnl,
+      dayLabel,
       marketValue,
       daily,
       series,
+      seriesLoading,
       allSetups: tally((t) => t.setups),
       allMistakes: tally((t) => t.mistakes),
     };
-  }, [trades, error, isLoading, summaries, openSummaries, quotes, quoteStatus]);
+  }, [trades, error, isLoading, summaries, openSummaries, quotes, quoteStatus, history, seriesLoading]);
 
   const run = useCallback(
     async <T,>(fn: () => Promise<T>, success?: string): Promise<T> => {

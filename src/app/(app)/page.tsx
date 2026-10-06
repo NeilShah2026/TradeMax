@@ -90,14 +90,25 @@ export default function DashboardPage() {
             <div className="text-[34px] leading-none font-semibold tracking-tight sm:text-[40px]">
               <BigMoney value={shown} />
             </div>
-            <div className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-xs">
-              <Money value={change} sign className={signClass(change)} />
-              <span className="text-muted">{hover ? (hover.live ? "now" : `through ${format(hover.date, "MMM d, yyyy")}`) : RANGE_LABEL[range]}</span>
+            <div className="mt-2.5 flex min-h-4 flex-wrap items-center gap-x-2 gap-y-1 font-mono text-xs">
+              {j.seriesLoading ? (
+                <Skeleton className="h-4 w-40" />
+              ) : (
+                <>
+                  <Money value={change} sign className={signClass(change)} />
+                  <span className="text-muted">{RANGE_LABEL[range]}</span>
+                  {hover && (
+                    <span className="text-muted">
+                      · {hover.live ? "today" : format(hover.date, "MMM d, yyyy")} <Money value={hover.daily} sign className={signClass(hover.daily)} />
+                    </span>
+                  )}
+                </>
+              )}
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
               <HeroChip label="Realized" value={j.realized} />
               <HeroChip label="Open P&L" value={j.unrealized} />
-              <HeroChip label="Today" value={j.dayPnl} />
+              <HeroChip label={j.dayLabel} value={j.dayPnl} />
             </div>
           </>
         )}
@@ -105,8 +116,8 @@ export default function DashboardPage() {
 
       {/* Chart */}
       <div className="mt-4">
-        {j.loading ? (
-          <Skeleton className="mx-4 h-[260px] sm:mx-8" />
+        {j.loading || j.seriesLoading ? (
+          <Skeleton className="mx-4 h-[260px] rounded-2xl sm:mx-8" />
         ) : j.summaries.length === 0 ? (
           <div className="mx-4 grid h-[260px] place-items-center rounded-2xl border border-dashed border-border sm:mx-8">
             <EmptyState

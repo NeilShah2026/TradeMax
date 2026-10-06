@@ -171,3 +171,57 @@ export const DEMO_SYMBOL_NAMES: Record<string, string> = {
   META: "Meta Platforms", AMZN: "Amazon.com Inc", GOOGL: "Alphabet Inc", SPY: "SPDR S&P 500 ETF", QQQ: "Invesco QQQ Trust",
   PLTR: "Palantir Technologies", COIN: "Coinbase Global", NFLX: "Netflix Inc", AVGO: "Broadcom Inc", SHOP: "Shopify Inc", UBER: "Uber Technologies",
 };
+
+/**
+ * Demo-mode daily closes: a path that passes through every fill price on its fill day and ends at today's
+ * simulated quote, with deterministic day-to-day noise in between.
+ */
+export function simulateHistory(
+  needs: Record<string, string>,
+  trades: Trade[],
+  quotes: Record<string, Quote>,
+  now = new Date(),
+): Record<string, Record<string, number>> {
+  const key = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const out: Record<string, Record<string, number>> = {};
+  for (const [sym, from] of Object.entries(needs)) {
+    const anchors = new Map<string, number>();
+    trades
+      .filter((t) => t.symbol === sym)
+      .flatMap((t) => t.fills)
+      .forEach((f) => anchors.set(key(new Date(f.executed_at)), f.price));
+    if (quotes[sym]) anchors.set(key(now), quotes[sym].price);
+    const pts = [...anchors.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    if (!pts.length) continue;
+
+    const rand = mulberry32([...sym].reduce((a, c) => a * 31 + c.charCodeAt(0), 11));
+    const [y, m, d] = from.split("-").map(Number);
+    const cur = new Date(y, m - 1, d);
+    cur.setDate(cur.getDate() - 5);
+    const closes: Record<string, number> = {};
+    let walk = 0;
+    let j = 0;
+    for (; key(cur) <= key(now); cur.setDate(cur.getDate() + 1)) {
+      if (cur.getDay() === 0 || cur.getDay() === 6) continue;
+      const k = key(cur);
+      while (j < pts.length - 1 && pts[j + 1][0] <= k) j++;
+      const [k0, p0] = pts[j];
+      const next = pts[j + 1];
+      let base = p0;
+      let gap = 1;
+      if (k >= k0 && next) {
+        const t0 = new Date(k0).getTime();
+        const t1 = new Date(next[0]).getTime();
+        const f = (new Date(k).getTime() - t0) / Math.max(1, t1 - t0);
+        base = p0 + (next[1] - p0) * f;
+        gap = Math.sin(Math.PI * f); // noise fades to zero at each anchor
+      } else if (k < k0) {
+        gap = 1;
+      }
+      walk = walk * 0.85 + (rand() - 0.5) * 0.03;
+      closes[k] = Math.round(base * (1 + walk * gap) * 100) / 100;
+    }
+    out[sym] = closes;
+  }
+  return out;
+}

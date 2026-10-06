@@ -49,7 +49,7 @@ export function TagInput({ value, onChange, suggestions, placeholder }: { value:
           onKeyDown={onKey}
           onBlur={() => add(draft)}
           placeholder={value.length ? "" : placeholder}
-          className="h-6 min-w-24 flex-1 bg-transparent px-1 text-sm outline-none placeholder:text-faint"
+          className="h-6 min-w-24 flex-1 bg-transparent px-1 text-base outline-none placeholder:text-faint sm:text-sm"
         />
       </div>
       {rest.length > 0 && (
@@ -303,7 +303,7 @@ export function NewTradeDialog() {
           </Field>
         </div>
         <Field label="Date & time">
-          <Input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} className="font-mono text-[13px]" />
+          <Input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} className="font-mono sm:text-[13px]" />
         </Field>
         <Field label="Setup" hint="Enter to add">
           <TagInput value={setups} onChange={setSetups} suggestions={allSetups} placeholder="Breakout, Pullback…" />
@@ -529,7 +529,7 @@ export function FillDialog({
             </Field>
           </div>
           <Field label="Date & time">
-            <Input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} className="font-mono text-[13px]" />
+            <Input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} className="font-mono sm:text-[13px]" />
           </Field>
           {error && <p className="rounded-xl bg-neg-soft px-3 py-2 text-sm text-neg">{error}</p>}
           <button type="submit" className="hidden" />

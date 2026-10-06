@@ -77,7 +77,7 @@ export function SectionTitle({ children, right, className }: { children: ReactNo
 // ---------- Inputs ----------
 
 const fieldBase =
-  "w-full rounded-xl border border-border bg-surface px-3 text-sm text-fg placeholder:text-faint transition-[border,box-shadow] outline-none focus:border-ring focus:ring-3 focus:ring-ring/20 disabled:opacity-60";
+  "w-full rounded-xl border border-border bg-surface px-3 text-base text-fg sm:text-sm placeholder:text-faint transition-[border,box-shadow] outline-none focus:border-ring focus:ring-3 focus:ring-ring/20 disabled:opacity-60";
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input({ className, ...props }, ref) {
   return <input ref={ref} className={cn(fieldBase, "h-10", className)} {...props} />;

@@ -65,6 +65,24 @@ export default function TradesPage() {
     return { pnl: rows.reduce((a, r) => a + r.pnl, 0), winRate: wins + losses ? wins / (wins + losses) : null };
   }, [rows]);
 
+  // Phones: group by month of the trade's date (follows the current sort when sorting by date)
+  const monthGroups = useMemo(() => {
+    const groups: { key: string; label: string; pnl: number; rows: Row[] }[] = [];
+    const dir = sort.key === "date" ? sort.dir : -1;
+    const sorted = [...rows].sort((a, b) => (a.date.getTime() - b.date.getTime()) * dir);
+    for (const r of sorted) {
+      const key = format(r.date, "yyyy-MM");
+      let g = groups[groups.length - 1];
+      if (!g || g.key !== key) {
+        g = { key, label: format(r.date, "MMMM yyyy"), pnl: 0, rows: [] };
+        groups.push(g);
+      }
+      g.pnl += r.pnl;
+      g.rows.push(r);
+    }
+    return groups;
+  }, [rows, sort.key, sort.dir]);
+
   const toggleSort = (key: SortKey) => setSort((s) => (s.key === key ? { key, dir: s.dir === 1 ? -1 : 1 } : { key, dir: key === "symbol" ? 1 : -1 }));
   const filtered = status !== "all" || side !== "all" || !!query || !!tag;
 
@@ -129,14 +147,14 @@ export default function TradesPage() {
           </div>
         </div>
         {tags.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-1.5">
+          <div className="-mx-4 mt-3 flex gap-1.5 overflow-x-auto px-4 pb-1 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
             {tags.slice(0, 16).map((t) => (
               <button
                 key={t}
                 type="button"
                 onClick={() => setTag(tag === t ? null : t)}
                 className={cn(
-                  "h-6 cursor-pointer rounded-lg border px-2 text-xs transition-colors",
+                  "h-7 shrink-0 cursor-pointer rounded-lg border px-2.5 text-xs whitespace-nowrap transition-colors sm:h-6 sm:px-2",
                   tag === t ? "border-fg bg-fg text-bg" : "border-border text-muted hover:bg-surface-2 hover:text-fg",
                   j.allMistakes.includes(t) && tag !== t && "border-dashed",
                 )}
@@ -147,7 +165,7 @@ export default function TradesPage() {
           </div>
         )}
 
-        <Card className="mt-5 overflow-hidden">
+        <Card className="mt-5 overflow-clip">
           {j.loading ? (
             <div className="space-y-2 p-4">
               {Array.from({ length: 6 }).map((_, i) => (
@@ -222,33 +240,44 @@ export default function TradesPage() {
                 </table>
               </div>
 
-              {/* Mobile list */}
-              <ul className="divide-y divide-border md:hidden">
-                {rows.map(({ s, pnl, ret, date }) => (
-                  <li key={s.trade.id}>
-                    <button type="button" onClick={() => router.push(`/trades/${s.trade.id}`)} className="flex w-full cursor-pointer items-center gap-3 px-4 py-3 text-left active:bg-surface-2">
-                      <TickerLogo symbol={s.trade.symbol} size={34} />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-sm font-semibold">{s.trade.symbol}</span>
-                          <SideBadge side={s.trade.side} />
-                        </div>
-                        <div className="mt-0.5 font-mono text-[11px] text-muted">
-                          {s.status === "open" ? "Open" : "Closed"} · {format(date, "MMM d")} · {fmtQty(s.status === "open" ? s.openQty : s.exitQty)} sh
-                        </div>
-                      </div>
-                      <div className="text-right font-mono">
-                        <div className="text-sm font-medium">
-                          <Pnl value={pnl} />
-                        </div>
-                        <div className="text-[11px]">
-                          <PnlPct value={ret} />
-                        </div>
-                      </div>
-                    </button>
-                  </li>
+              {/* Mobile list, grouped by month */}
+              <div className="md:hidden">
+                {monthGroups.map((g) => (
+                  <section key={g.key}>
+                    <div className="sticky top-[calc(3.5rem+env(safe-area-inset-top))] z-10 flex items-center justify-between border-b border-border bg-surface-2/95 px-4 py-1.5 font-mono text-[11px] backdrop-blur">
+                      <span className="text-muted">{g.label}</span>
+                      <Pnl value={g.pnl} />
+                    </div>
+                    <ul className="divide-y divide-border">
+                      {g.rows.map(({ s, pnl, ret, date }) => (
+                        <li key={s.trade.id}>
+                          <button type="button" onClick={() => router.push(`/trades/${s.trade.id}`)} className="flex w-full cursor-pointer items-center gap-3 px-4 py-3 text-left active:bg-surface-2">
+                            <TickerLogo symbol={s.trade.symbol} size={34} />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono text-sm font-semibold">{s.trade.symbol}</span>
+                                <SideBadge side={s.trade.side} />
+                                {s.status === "open" && <StatusBadge status="open" />}
+                              </div>
+                              <div className="mt-0.5 truncate font-mono text-[11px] text-muted">
+                                {format(date, "MMM d")} · {fmtQty(s.status === "open" ? s.openQty : s.exitQty)} sh{s.trade.setups[0] ? ` · ${s.trade.setups[0]}` : ""}
+                              </div>
+                            </div>
+                            <div className="text-right font-mono">
+                              <div className="text-sm font-medium">
+                                <Pnl value={pnl} />
+                              </div>
+                              <div className="text-[11px]">
+                                <PnlPct value={ret} />
+                              </div>
+                            </div>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
                 ))}
-              </ul>
+              </div>
             </>
           )}
         </Card>
