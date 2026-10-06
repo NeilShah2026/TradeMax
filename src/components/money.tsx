@@ -1,3 +1,6 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import { fmtMoney, fmtPct, signClass } from "@/lib/format";
 
@@ -32,4 +35,27 @@ export function BigMoney({ value, sign, className }: { value: number; sign?: boo
       <span className="text-muted">{s.slice(dot)}</span>
     </span>
   );
+}
+
+/** Eases a number from its last shown value to `target` (instant with reduced motion), like a ticking price. */
+export function useTweened(target: number, ms = 700) {
+  const [shown, setShown] = useState(target);
+  const current = useRef(target);
+  useEffect(() => {
+    const from = current.current;
+    if (from === target) return;
+    const dur = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? 0 : ms;
+    const t0 = performance.now();
+    let raf = 0;
+    const step = (now: number) => {
+      const k = dur ? Math.min(1, (now - t0) / dur) : 1;
+      const x = k === 1 ? target : from + (target - from) * (1 - Math.pow(1 - k, 3));
+      current.current = x;
+      setShown(x);
+      if (k < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [target, ms]);
+  return shown;
 }

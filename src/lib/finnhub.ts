@@ -1,4 +1,5 @@
 import "server-only";
+import { MIN_QUOTE_INTERVAL, QUOTE_CALLS_PER_MIN } from "./quote-budget";
 import type { Profile, Quote } from "./types";
 
 const BASE = "https://finnhub.io/api/v1";
@@ -21,11 +22,22 @@ async function get<T>(path: string, params: Record<string, string>, init?: Reque
 }
 
 // Small in-process caches so several tabs/components don't burn through the 60 req/min free tier.
-// Each symbol hits Finnhub at most once per QUOTE_TTL no matter how many clients are polling.
-export const QUOTE_TTL = 15_000;
+// Clients poll at the fastest rate their symbol count allows (lib/quote-budget); this side enforces it:
+// a short cache dedupes tabs polling the same symbols, and a sliding one-minute window caps upstream quote
+// calls at QUOTE_CALLS_PER_MIN — past that, the last known quote is served instead.
+const QUOTE_TTL = MIN_QUOTE_INTERVAL - 500;
 const quoteCache = new Map<string, { at: number; quote: Quote | null }>();
 const quoteInflight = new Map<string, Promise<Quote | null>>();
+const quoteCalls: number[] = [];
 const profileCache = new Map<string, Profile>();
+
+function takeQuoteCall() {
+  const now = Date.now();
+  while (quoteCalls.length && now - quoteCalls[0] >= 60_000) quoteCalls.shift();
+  if (quoteCalls.length >= QUOTE_CALLS_PER_MIN) return false;
+  quoteCalls.push(now);
+  return true;
+}
 
 export async function fetchQuote(symbol: string): Promise<Quote | null> {
   const hit = quoteCache.get(symbol);
@@ -33,6 +45,10 @@ export async function fetchQuote(symbol: string): Promise<Quote | null> {
   // Concurrent requests for the same symbol share one upstream call
   const pending = quoteInflight.get(symbol);
   if (pending) return pending;
+  if (!takeQuoteCall()) {
+    if (hit) return hit.quote;
+    throw new Error("rate_limited");
+  }
   const req = (async () => {
     const q = await get<{ c: number; d: number | null; dp: number | null; pc: number; t: number }>("/quote", { symbol }, { cache: "no-store" });
     const quote: Quote | null = q && q.c > 0 ? { symbol, price: q.c, change: q.d ?? 0, changePct: q.dp ?? 0, prevClose: q.pc, time: q.t } : null;

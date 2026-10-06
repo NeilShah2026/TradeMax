@@ -6,6 +6,7 @@ import useSWR, { useSWRConfig } from "swr";
 import { toast } from "sonner";
 import { dailyRealized, dayKey, historyNeeds, livePosition, markToMarketSeries, summarize, type CloseHistory, type DailyPnl, type LivePosition, type SeriesPoint, type TradeSummary } from "@/lib/calc";
 import { simulateHistory, simulateQuotes } from "@/lib/demo-data";
+import { CLOSED_QUOTE_INTERVAL, quoteInterval } from "@/lib/quote-budget";
 import { isDemo, repo } from "@/lib/repo";
 import { getBrowserSupabase } from "@/lib/supabase/client";
 import type { FillInput, NewTradeInput, Quote, Trade, TradePatch } from "@/lib/types";
@@ -22,6 +23,10 @@ interface Journal {
   closed: TradeSummary[];
   quotes: Record<string, Quote>;
   quoteStatus: QuoteStatus;
+  /** How often quotes refresh right now (ms) */
+  quoteInterval: number;
+  /** When the last quote fetch landed (epoch ms), even if prices were unchanged */
+  quotesUpdatedAt: number | null;
   realized: number;
   unrealized: number;
   dayPnl: number;
@@ -86,15 +91,13 @@ async function fetchQuotes(symbols: string[]): Promise<QuotesResponse> {
   return res.json();
 }
 
-/** Fastest the client ever polls for quotes (matches the server-side cache in lib/finnhub). */
-export const LIVE_INTERVAL = 15_000;
-
 /** Live quotes for an arbitrary list of symbols (dialogs, trade page). */
 export function useQuotes(symbols: string[], anchors: Record<string, number> = {}) {
   const marketOpen = useMarketOpen();
   const key = symbols.length ? ["quotes", [...symbols].sort().join(",")] : null;
-  // >10 symbols at 15s would be 40+ calls/min against Finnhub's 60/min free tier, so back off
-  const interval = !marketOpen ? 120_000 : isDemo ? 5_000 : symbols.length > 10 ? 2 * LIVE_INTERVAL : LIVE_INTERVAL;
+  // As fast as Finnhub's per-minute budget allows for this many symbols (one call per symbol per refresh)
+  const interval = marketOpen ? quoteInterval(symbols.length) : CLOSED_QUOTE_INTERVAL;
+  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const { data, error, isLoading } = useSWR(
     key,
     async ([, list]: [string, string]) => {
@@ -102,8 +105,16 @@ export function useQuotes(symbols: string[], anchors: Record<string, number> = {
       if (isDemo) return { configured: true, quotes: simulateQuotes(syms, anchors), rateLimited: false } as QuotesResponse;
       return fetchQuotes(syms);
     },
-    // Focus/remount revalidations are deduped against the last fetch so they never add calls inside the 15s window
-    { refreshInterval: interval, revalidateOnFocus: true, keepPreviousData: true, dedupingInterval: isDemo ? 4_000 : LIVE_INTERVAL, focusThrottleInterval: LIVE_INTERVAL },
+    // Focus/remount revalidations are deduped against the last fetch so they never add calls inside the window
+    {
+      refreshInterval: interval,
+      revalidateOnFocus: true,
+      keepPreviousData: true,
+      dedupingInterval: Math.min(interval, 15_000),
+      focusThrottleInterval: Math.min(interval, 15_000),
+      // SWR keeps the old object when prices are unchanged, so this is the reliable "a fetch landed" signal
+      onSuccess: () => setUpdatedAt(Date.now()),
+    },
   );
   let status: QuoteStatus = "loading";
   if (isDemo) status = "demo";
@@ -111,7 +122,7 @@ export function useQuotes(symbols: string[], anchors: Record<string, number> = {
   else if (data && !data.configured) status = "off";
   else if (data) status = marketOpen ? "live" : "closed";
   else if (!isLoading && !key) status = marketOpen ? "live" : "closed";
-  return { quotes: data?.quotes ?? {}, status, marketOpen };
+  return { quotes: data?.quotes ?? {}, status, marketOpen, interval, updatedAt };
 }
 
 /** Sends the browser to /login whenever there's no Supabase session (expired, signed out in another tab, …). */
@@ -145,7 +156,7 @@ export function JournalProvider({ children }: { children: React.ReactNode }) {
   const openSummaries = useMemo(() => summaries.filter((s) => s.status === "open" && s.openQty > 0), [summaries]);
   const openSymbols = useMemo(() => [...new Set(openSummaries.map((s) => s.trade.symbol))], [openSummaries]);
   const anchors = useMemo(() => Object.fromEntries(openSummaries.map((s) => [s.trade.symbol, s.avgCost])), [openSummaries]);
-  const { quotes, status: quoteStatus } = useQuotes(openSymbols, anchors);
+  const { quotes, status: quoteStatus, interval: quoteInt, updatedAt: quotesUpdatedAt } = useQuotes(openSymbols, anchors);
 
   // Daily closes for every symbol held overnight, so the P&L curve is marked to market each day
   const needs = useMemo(() => historyNeeds(summaries), [summaries]);
@@ -212,6 +223,8 @@ export function JournalProvider({ children }: { children: React.ReactNode }) {
       closed,
       quotes,
       quoteStatus,
+      quoteInterval: quoteInt,
+      quotesUpdatedAt,
       realized,
       unrealized,
       dayPnl: sessionPnl,
@@ -223,7 +236,7 @@ export function JournalProvider({ children }: { children: React.ReactNode }) {
       allSetups: tally((t) => t.setups),
       allMistakes: tally((t) => t.mistakes),
     };
-  }, [trades, error, isLoading, summaries, openSummaries, quotes, quoteStatus, history, seriesLoading]);
+  }, [trades, error, isLoading, summaries, openSummaries, quotes, quoteStatus, quoteInt, quotesUpdatedAt, history, seriesLoading]);
 
   const run = useCallback(
     async <T,>(fn: () => Promise<T>, success?: string): Promise<T> => {

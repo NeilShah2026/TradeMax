@@ -5,8 +5,9 @@ import { Activity, BarChart3, ChevronDown, ChevronRight, LineChart, Plus } from 
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { PnlAreaChart, PnlColumns } from "@/components/charts";
-import { LIVE_INTERVAL, useJournal, type QuoteStatus } from "@/components/journal-provider";
-import { BigMoney, Money, PctPill, Pnl, PnlPct } from "@/components/money";
+import { LiveLineChart } from "@/components/live-chart";
+import { useJournal, type QuoteStatus } from "@/components/journal-provider";
+import { BigMoney, Money, PctPill, Pnl, PnlPct, useTweened } from "@/components/money";
 import { PageBody, PageHeader } from "@/components/shell";
 import { TickerLogo } from "@/components/ticker-logo";
 import { Button, Card, EmptyState, SectionTitle, Segmented, SideBadge, Skeleton, StatusBadge } from "@/components/ui";
@@ -60,12 +61,12 @@ export default function DashboardPage() {
   const shown = hover ? hover.value : total;
   const change = (hover ? hover.value : total) - baseline;
 
-  // Live portfolio: market value of open positions, sampled once per quote refresh (never faster than 15s)
+  // Live portfolio: market value of open positions, sampled once per quote refresh
   const openDayPnl = j.open.reduce((a, p) => a + (p.dayPnl ?? 0), 0);
   // One unquoted ticker (rate-limited, unsupported symbol) shouldn't stop the chart; it's carried at cost
   const quotesIn = j.open.some((p) => p.price !== null);
   const recording = quotesIn && (j.quoteStatus === "live" || j.quoteStatus === "demo");
-  const samples = useLiveSamples(recording ? { value: j.marketValue, pnl: openDayPnl } : null, LIVE_INTERVAL);
+  const samples = useLiveSamples(j.quotesUpdatedAt, recording ? { value: j.marketValue, pnl: openDayPnl } : null);
   const livePoints = useMemo<SeriesPoint[]>(
     () =>
       samples.map((s, i) => ({
@@ -83,6 +84,7 @@ export default function DashboardPage() {
     const ts = Object.values(j.quotes).map((q) => q.time).filter((t) => t > 0);
     return ts.length ? new Date(Math.max(...ts) * 1000) : null;
   }, [j.quotes]);
+  const intervalSec = Math.round(j.quoteInterval / 1000);
 
   const stats = useMemo(() => computeStats(j.closed), [j.closed]);
   const recent = useMemo(() => [...j.summaries].sort((a, b) => b.lastActivity.getTime() - a.lastActivity.getTime()).slice(0, 6), [j.summaries]);
@@ -118,6 +120,8 @@ export default function DashboardPage() {
             hoverAt={hover?.date ?? null}
             status={j.quoteStatus}
             quotedAt={quotedAt}
+            updatedAt={j.quotesUpdatedAt}
+            intervalSec={intervalSec}
             hasPositions={j.open.length > 0}
           />
         ) : (
@@ -154,8 +158,8 @@ export default function DashboardPage() {
         {mode === "live" ? (
           j.loading ? (
             <Skeleton className="mx-4 h-[260px] rounded-2xl sm:mx-8" />
-          ) : livePoints.length > 1 ? (
-            <PnlAreaChart
+          ) : livePoints.length ? (
+            <LiveLineChart
               points={livePoints}
               onHover={setHover}
               tip={(p) => ({ label: format(p.date, "h:mm:ss a"), sub: `Value ${fmtMoney(p.unrealized)}` })}
@@ -165,7 +169,7 @@ export default function DashboardPage() {
               {!j.open.length
                 ? "No open positions to track"
                 : recording
-                  ? `Building today's intraday chart — a new point every ${LIVE_INTERVAL / 1000}s`
+                  ? `Building today's intraday chart — a new point every ${intervalSec}s`
                   : "The intraday chart fills in while the market is open"}
             </div>
           )
@@ -309,6 +313,8 @@ function LiveHero({
   hoverAt,
   status,
   quotedAt,
+  updatedAt,
+  intervalSec,
   hasPositions,
 }: {
   value: number;
@@ -316,8 +322,16 @@ function LiveHero({
   hoverAt: Date | null;
   status: QuoteStatus;
   quotedAt: Date | null;
+  updatedAt: number | null;
+  intervalSec: number;
   hasPositions: boolean;
 }) {
+  // Numbers glide to each new quote; while one is moving it's tinted by direction, like a ticker
+  const tweenValue = useTweened(value);
+  const tweenPnl = useTweened(dayPnl);
+  const shownValue = hoverAt ? value : tweenValue;
+  const shownPnl = hoverAt ? dayPnl : tweenPnl;
+  const moving = !hoverAt && Math.abs(value - tweenValue) > 0.005;
   const base = value - dayPnl;
   const pct = base > 0 ? dayPnl / base : null;
   const ticking = status === "live" || status === "demo";
@@ -330,17 +344,22 @@ function LiveHero({
         : status === "loading"
           ? "Connecting…"
           : ticking
-            ? `Updated ${quotedAt ? format(quotedAt, "h:mm:ss a") : "—"} · every ${LIVE_INTERVAL / 1000}s`
+            ? `Updated ${updatedAt ? format(updatedAt, "h:mm:ss a") : "—"} · every ${intervalSec}s`
             : `Market closed${quotedAt ? ` · as of ${format(quotedAt, "EEE h:mm a")}` : ""}`;
   return (
     <>
-      <div className="text-[34px] leading-none font-semibold tracking-tight sm:text-[40px]">
-        <BigMoney value={value} />
+      <div
+        className={cn(
+          "text-[34px] leading-none font-semibold tracking-tight transition-colors duration-700 sm:text-[40px]",
+          moving && (value > tweenValue ? "text-pos" : "text-neg"),
+        )}
+      >
+        <BigMoney value={shownValue} />
       </div>
       <div className="mt-2.5 flex min-h-4 flex-wrap items-center gap-x-2 gap-y-1 font-mono text-xs">
         {hasPositions && (
           <>
-            <Money value={dayPnl} sign className={signClass(dayPnl)} />
+            <Money value={shownPnl} sign className={signClass(shownPnl)} />
             <PnlPct value={pct} />
           </>
         )}

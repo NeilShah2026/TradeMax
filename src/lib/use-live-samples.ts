@@ -37,13 +37,12 @@ function save(day: string, samples: LiveSample[]) {
 }
 
 /**
- * Intraday portfolio samples, taken every `interval` ms from the latest already-fetched numbers.
- * It only reads state (no fetching), so it costs no API calls. Pass `null` to pause recording.
+ * Intraday portfolio samples, one per landed quote fetch. `tick` is when that fetch landed; the hook only
+ * reads already-fetched numbers, so it costs no API calls. Pass `sample = null` to pause recording.
  */
-export function useLiveSamples(sample: Omit<LiveSample, "t"> | null, interval: number) {
+export function useLiveSamples(tick: number | null, sample: Omit<LiveSample, "t"> | null) {
   const [samples, setSamples] = useState<LiveSample[]>([]);
   const latest = useRef(sample);
-  const recording = sample !== null;
 
   useEffect(() => {
     latest.current = sample;
@@ -55,29 +54,23 @@ export function useLiveSamples(sample: Omit<LiveSample, "t"> | null, interval: n
   }, []);
 
   useEffect(() => {
-    if (!recording) return;
-    const append = () => {
+    if (!tick) return;
+    // The fetch-landed signal can render before the new prices do; wait a tick so `latest` holds them
+    const id = setTimeout(() => {
       const s = latest.current;
       if (!s) return;
-      const now = Date.now();
-      const day = dayKey(new Date(now));
+      const day = dayKey(new Date(tick));
       setSamples((prev) => {
         const today = prev.length && dayKey(new Date(prev[0].t)) === day ? prev : load(day);
         const last = today[today.length - 1];
-        // Re-enabling recording right after a sample shouldn't double up
-        if (last && now - last.t < interval / 3) return prev;
-        const next = [...today, { t: now, ...s }].slice(-MAX);
+        if (last && tick <= last.t) return prev;
+        const next = [...today, { t: tick, ...s }].slice(-MAX);
         save(day, next);
         return next;
       });
-    };
-    const first = setTimeout(append, 0);
-    const id = setInterval(append, interval);
-    return () => {
-      clearTimeout(first);
-      clearInterval(id);
-    };
-  }, [recording, interval]);
+    }, 0);
+    return () => clearTimeout(id);
+  }, [tick]);
 
   return samples;
 }
